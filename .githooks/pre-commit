@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Blocks manual commits that add credential-looking content (memory-sync.sh scans on its own).
+exec "$(git rev-parse --show-toplevel)/hooks/secret-scan.sh"
