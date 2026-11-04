@@ -140,6 +140,56 @@ if has "$CP" copilot; then
     agentStop:    [{type: "command", bash: ($sync + " save"), timeoutSec: 60}]}}' >"$CP/hooks/ai-memories.json"
 fi
 
+KIMI="${KIMI_CODE_HOME:-$HOME/.kimi-code}" # Kimi uses flat TOML hook entries in config.toml.
+if has "$KIMI" kimi; then
+  mkdir -p "$KIMI"
+  KT="$KIMI/config.toml"
+  [ -f "$KT" ] || : >"$KT"
+  cp "$KT" "$KT.bak-$(date +%Y%m%d%H%M%S)"
+  awk '
+    hook && /^\[/ {
+      if (block !~ /memory-(sync|checkpoint)\.sh/) printf "%s", block
+      hook = 0; block = ""
+    }
+    /^\[\[hooks\]\][ \t]*$/ { hook = 1; block = $0 ORS; next }
+    hook { block = block $0 ORS; next }
+    { print }
+    END { if (hook && block !~ /memory-(sync|checkpoint)\.sh/) printf "%s", block }
+  ' "$KT" >"$KT.tmp" && mv "$KT.tmp" "$KT"
+  cat >>"$KT" <<EOF
+
+[[hooks]]
+event = "SessionStart"
+command = "$H/memory-sync.sh start"
+timeout = 30
+
+[[hooks]]
+event = "UserPromptSubmit"
+command = "$H/memory-sync.sh context kimi"
+timeout = 10
+
+[[hooks]]
+event = "UserPromptSubmit"
+command = "$H/memory-checkpoint.sh kimi"
+timeout = 10
+
+[[hooks]]
+event = "PostCompact"
+command = "$H/memory-sync.sh clear-context"
+timeout = 10
+
+[[hooks]]
+event = "Stop"
+command = "$H/memory-sync.sh save"
+timeout = 60
+
+[[hooks]]
+event = "SessionEnd"
+command = "$H/memory-sync.sh save"
+timeout = 30
+EOF
+fi
+
 # 4. Link projects. New projects get linked automatically by the SessionStart hook later on.
 [ $# -gt 0 ] || set -- "$HOME/CODING"
 for root in "$@"; do

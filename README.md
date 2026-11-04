@@ -1,8 +1,8 @@
 # ai-memories
 
 Shared, version-controlled memory for every coding agent on every machine: **Claude Code, Codex, Gemini CLI,
-Cursor, GitHub Copilot CLI, OpenCode and Grok** all read and write the same Markdown memory, synced through a private
-git repo you own.
+Cursor, GitHub Copilot CLI, Kimi Code, OpenCode and Grok** all read and write the same Markdown memory, synced through
+a private git repo you own.
 
 Claude Code's auto-memory normally lives in `~/.claude/projects/<path-of-the-project>/memory/`: local to one machine,
 unversioned, and lost with the laptop. This repo replaces each of those folders with a symlink into git, so memory is
@@ -114,6 +114,16 @@ OpenCode does not run the Claude hooks. `install.sh` symlinks `opencode/plugin/i
 `~/.config/opencode/plugins/ai-memories.ts` and loads `global/OPENCODE.md`. The plugin pulls on the first prompt,
 injects the project memory folder, and runs `memory-sync.sh save` on `session.idle` and every 3 minutes. Agents still
 write the files; they do not run git themselves.
+
+## Kimi Code
+
+`install.sh` sets up Kimi when `~/.kimi-code` exists or `kimi` is on the PATH. It backs up
+`$KIMI_CODE_HOME/config.toml` (default `~/.kimi-code/config.toml`), preserves existing settings and hooks, and replaces
+only its own `[[hooks]]` entries on re-run.
+
+Kimi pulls and links project memory on `SessionStart`, then injects the memory index and writing rules as plain context
+on the first `UserPromptSubmit`. The index is injected again after compaction. Kimi also gets the checkpoint reminder
+every 6th prompt and runs `memory-sync.sh save` on `Stop` and `SessionEnd`. Restart Kimi or run `/reload` after installing.
 
 ## Codex, Gemini CLI, Cursor, GitHub Copilot CLI
 
