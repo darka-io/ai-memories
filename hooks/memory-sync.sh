@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Keeps Claude Code auto-memory inside the ai-memories git repo.
-#   memory-sync.sh start        SessionStart hook: pull, then link this session's project into the repo
-#   memory-sync.sh save         Stop/SessionEnd hook: secret-scan, commit and push memory changes
-#   memory-sync.sh link <dir>   link one project directory (install.sh uses this)
-#   memory-sync.sh path [dir]   print the project's memory folder in the repo (Grok uses this)
+#   memory-sync.sh start          SessionStart hook: pull, then link this session's project into the repo
+#   memory-sync.sh context kimi   UserPromptSubmit hook: inject Kimi's memory index once per session
+#   memory-sync.sh clear-context  PostCompact hook: allow Kimi's next prompt to inject the index again
+#   memory-sync.sh save           Stop/SessionEnd hook: secret-scan, commit and push memory changes
+#   memory-sync.sh link <dir>     link one project directory (install.sh uses this)
+#   memory-sync.sh path [dir]     print the project's memory folder in the repo (Grok uses this)
 #
 # Claude Code keeps a project's memory in ~/.claude/projects/<sanitized-path>/memory. That name is
 # derived from the local path, so it differs per machine. We replace it with a symlink to
@@ -83,7 +85,19 @@ commit_and_push() {
   t 20 git push -q origin HEAD 2>/dev/null || echo "ai-memories: push failed, will retry on next save" >&2
 }
 
-# Clients without Claude Code's auto-memory get the index injected at session start, in their own hook format.
+KIMI_STATE_DIR="${TMPDIR:-/tmp}/ai-memories-kimi"
+
+kimi_state_file() {
+  local session
+  session=$(printf '%s' "$1" | sed 's/[^A-Za-z0-9_-]/-/g')
+  echo "$KIMI_STATE_DIR/$session"
+}
+
+clear_kimi_context() {
+  rm -f "$(kimi_state_file "$1")"
+}
+
+# Clients without Claude Code's auto-memory get the index injected in their own hook format.
 context() {
   local dir text
   dir="$REPO/projects/$(slug_for "$(root_for "$1")")"
@@ -95,6 +109,7 @@ $(head -c 25000 "$dir/MEMORY.md" 2>/dev/null)"
     cursor)        jq -n --arg t "$text" '{additional_context: $t}' ;;
     copilot)       jq -n --arg t "$text" '{additionalContext: $t}' ;;
     gemini|codex)  jq -n --arg t "$text" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $t}}' ;;
+    kimi)          printf '%s\n' "$text" ;;
   esac
 }
 
@@ -103,9 +118,27 @@ case "${1:-}" in
     # start [cursor|copilot|gemini|codex]: the optional client name also prints the memory index as context.
     input=$(cat 2>/dev/null || true)
     cwd=$(jq -r '.cwd // .workspace_roots[0] // empty' <<<"$input" 2>/dev/null)
+    session=$(jq -r '.session_id // "unknown"' <<<"$input" 2>/dev/null)
+    clear_kimi_context "$session"
     with_lock pull
     link "${cwd:-$PWD}"
     [ -n "${2:-}" ] && context "${cwd:-$PWD}" "$2"
+    ;;
+  context)
+    # Kimi SessionStart is observation-only, so inject once on UserPromptSubmit instead.
+    input=$(cat 2>/dev/null || true)
+    cwd=$(jq -r '.cwd // .workspace_roots[0] // empty' <<<"$input" 2>/dev/null)
+    session=$(jq -r '.session_id // "unknown"' <<<"$input" 2>/dev/null)
+    state=$(kimi_state_file "$session")
+    [ -f "$state" ] && exit 0
+    mkdir -p "$KIMI_STATE_DIR"
+    : >"$state"
+    context "${cwd:-$PWD}" "${2:-kimi}"
+    ;;
+  clear-context)
+    input=$(cat 2>/dev/null || true)
+    session=$(jq -r '.session_id // "unknown"' <<<"$input" 2>/dev/null)
+    clear_kimi_context "$session"
     ;;
   save)
     cat >/dev/null 2>&1 || true
@@ -118,6 +151,6 @@ case "${1:-}" in
     # memory folder for a project dir (default: current dir); for agents without the symlink, e.g. Grok
     echo "$REPO/projects/$(slug_for "$(root_for "${2:-$PWD}")")"
     ;;
-  *) echo "usage: $0 {start|save|link <dir>...|path [dir]}" >&2; exit 1 ;;
+  *) echo "usage: $0 {start|context|clear-context|save|link <dir>...|path [dir]}" >&2; exit 1 ;;
 esac
 exit 0
